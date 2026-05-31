@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 
 BATCH_SIZE = 1000
@@ -39,6 +40,12 @@ class ParsedEvent:
     language: str | None
 
 
+@dataclass(frozen=True)
+class IngestEvent:
+    parsed: ParsedEvent
+    raw_event: dict[str, Any]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Ingest GitHub Archive events.")
     parser.add_argument(
@@ -50,6 +57,19 @@ def parse_args() -> argparse.Namespace:
         "--last-hours",
         type=int,
         help="Ingest the latest completed N archive hours in UTC.",
+    )
+    parser.add_argument(
+        "--start-hour",
+        help="Start archive hour in UTC, formatted as YYYY-MM-DD-H. Used with --end-hour.",
+    )
+    parser.add_argument(
+        "--end-hour",
+        help="End archive hour in UTC, formatted as YYYY-MM-DD-H. Inclusive.",
+    )
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Retry all hours currently marked as failed in the ingest log.",
     )
     parser.add_argument(
         "--database-url",
@@ -79,17 +99,49 @@ def parse_archive_hour(value: str) -> datetime:
     return parsed.replace(tzinfo=timezone.utc)
 
 
-def resolve_hours(args: argparse.Namespace) -> list[datetime]:
+def hour_range(start: datetime, end: datetime) -> Iterable[datetime]:
+    current = start
+    while current <= end:
+        yield current
+        current += timedelta(hours=1)
+
+
+def failed_hours(conn: psycopg.Connection[Any]) -> list[datetime]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT archive_hour
+            FROM dataset_github_event.github_archive_ingest_log
+            WHERE status = 'failed'
+            ORDER BY archive_hour
+            """
+        )
+        return [row[0] for row in cur.fetchall()]
+
+
+def resolve_hours(args: argparse.Namespace, conn: psycopg.Connection[Any]) -> list[datetime]:
     hours: set[datetime] = set()
 
     if args.hour:
         hours.update(parse_archive_hour(value) for value in args.hour)
+
+    if args.start_hour or args.end_hour:
+        if not args.start_hour or not args.end_hour:
+            raise SystemExit("--start-hour and --end-hour must be used together")
+        start = parse_archive_hour(args.start_hour)
+        end = parse_archive_hour(args.end_hour)
+        if start > end:
+            raise SystemExit("--start-hour must be earlier than or equal to --end-hour")
+        hours.update(hour_range(start, end))
 
     if args.last_hours:
         if args.last_hours < 1:
             raise SystemExit("--last-hours must be greater than 0")
         latest = completed_utc_hour()
         hours.update(latest - timedelta(hours=offset) for offset in range(args.last_hours))
+
+    if args.retry_failed:
+        hours.update(failed_hours(conn))
 
     if not hours:
         hours.add(completed_utc_hour())
@@ -115,6 +167,16 @@ def read_archive_lines(url: str) -> Iterable[bytes]:
 
 def parse_created_at(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def remove_nul_chars(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, list):
+        return [remove_nul_chars(item) for item in value]
+    if isinstance(value, dict):
+        return {key: remove_nul_chars(item) for key, item in value.items()}
+    return value
 
 
 def first_commit_id(payload: dict[str, Any]) -> str | None:
@@ -171,6 +233,16 @@ def event_row(event: ParsedEvent) -> tuple[Any, ...]:
     )
 
 
+def raw_event_row(event: IngestEvent, hour: datetime) -> tuple[Any, ...]:
+    return (
+        event.parsed.id,
+        hour,
+        event.parsed.type,
+        event.parsed.created_at,
+        Jsonb(event.raw_event),
+    )
+
+
 def already_ingested(conn: psycopg.Connection[Any], hour: datetime) -> bool:
     with conn.cursor() as cur:
         cur.execute(
@@ -191,14 +263,15 @@ def mark_started(conn: psycopg.Connection[Any], hour: datetime, url: str) -> Non
             """
             INSERT INTO dataset_github_event.github_archive_ingest_log (
               archive_hour, archive_url, status, event_count, inserted_count,
-              error_message, started_at, finished_at
+              raw_inserted_count, error_message, started_at, finished_at
             )
-            VALUES (%s, %s, 'running', 0, 0, NULL, now(), NULL)
+            VALUES (%s, %s, 'running', 0, 0, 0, NULL, now(), NULL)
             ON CONFLICT (archive_hour) DO UPDATE SET
               archive_url = EXCLUDED.archive_url,
               status = 'running',
               event_count = 0,
               inserted_count = 0,
+              raw_inserted_count = 0,
               error_message = NULL,
               started_at = now(),
               finished_at = NULL
@@ -214,6 +287,7 @@ def mark_finished(
     status: str,
     event_count: int,
     inserted_count: int,
+    raw_inserted_count: int,
     error_message: str | None = None,
 ) -> None:
     with conn.cursor() as cur:
@@ -223,16 +297,17 @@ def mark_finished(
             SET status = %s,
                 event_count = %s,
                 inserted_count = %s,
+                raw_inserted_count = %s,
                 error_message = %s,
                 finished_at = now()
             WHERE archive_hour = %s
             """,
-            (status, event_count, inserted_count, error_message, hour),
+            (status, event_count, inserted_count, raw_inserted_count, error_message, hour),
         )
     conn.commit()
 
 
-def insert_batch(conn: psycopg.Connection[Any], batch: list[ParsedEvent]) -> int:
+def insert_event_batch(conn: psycopg.Connection[Any], batch: list[IngestEvent]) -> int:
     if not batch:
         return 0
 
@@ -249,11 +324,45 @@ def insert_batch(conn: psycopg.Connection[Any], batch: list[ParsedEvent]) -> int
             )
             ON CONFLICT (id) DO NOTHING
             """,
-            [event_row(event) for event in batch],
+            [event_row(event.parsed) for event in batch],
         )
         inserted = cur.rowcount if cur.rowcount >= 0 else 0
     conn.commit()
     return inserted
+
+
+def insert_raw_batch(
+    conn: psycopg.Connection[Any],
+    batch: list[IngestEvent],
+    hour: datetime,
+) -> int:
+    if not batch:
+        return 0
+
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO dataset_github_event.github_event_raw (
+              id, archive_hour, type, created_at, raw_event
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            [raw_event_row(event, hour) for event in batch],
+        )
+        inserted = cur.rowcount if cur.rowcount >= 0 else 0
+    conn.commit()
+    return inserted
+
+
+def insert_batch(
+    conn: psycopg.Connection[Any],
+    batch: list[IngestEvent],
+    hour: datetime,
+) -> tuple[int, int]:
+    raw_inserted = insert_raw_batch(conn, batch, hour)
+    fact_inserted = insert_event_batch(conn, batch)
+    return fact_inserted, raw_inserted
 
 
 def ingest_hour(conn: psycopg.Connection[Any], hour: datetime, force: bool) -> None:
@@ -267,34 +376,50 @@ def ingest_hour(conn: psycopg.Connection[Any], hour: datetime, force: bool) -> N
 
     event_count = 0
     inserted_count = 0
-    batch: list[ParsedEvent] = []
+    raw_inserted_count = 0
+    batch: list[IngestEvent] = []
 
     try:
         for line in read_archive_lines(url):
             if not line.strip():
                 continue
-            raw_event = json.loads(line)
-            batch.append(parse_event(raw_event))
+            raw_event = remove_nul_chars(json.loads(line))
+            batch.append(IngestEvent(parsed=parse_event(raw_event), raw_event=raw_event))
             event_count += 1
 
             if len(batch) >= BATCH_SIZE:
-                inserted_count += insert_batch(conn, batch)
+                fact_inserted, raw_inserted = insert_batch(conn, batch, hour)
+                inserted_count += fact_inserted
+                raw_inserted_count += raw_inserted
                 batch.clear()
 
-        inserted_count += insert_batch(conn, batch)
-        mark_finished(conn, hour, "success", event_count, inserted_count)
-        print(f"done {hour.isoformat()} events={event_count} inserted={inserted_count}")
+        fact_inserted, raw_inserted = insert_batch(conn, batch, hour)
+        inserted_count += fact_inserted
+        raw_inserted_count += raw_inserted
+        mark_finished(conn, hour, "success", event_count, inserted_count, raw_inserted_count)
+        print(
+            f"done {hour.isoformat()} events={event_count} "
+            f"inserted={inserted_count} raw_inserted={raw_inserted_count}"
+        )
     except Exception as exc:
         conn.rollback()
-        mark_finished(conn, hour, "failed", event_count, inserted_count, str(exc))
+        mark_finished(
+            conn,
+            hour,
+            "failed",
+            event_count,
+            inserted_count,
+            raw_inserted_count,
+            str(exc),
+        )
         raise
 
 
 def main() -> int:
     args = parse_args()
-    hours = resolve_hours(args)
 
     with psycopg.connect(args.database_url) as conn:
+        hours = resolve_hours(args, conn)
         for hour in hours:
             ingest_hour(conn, hour, args.force)
 

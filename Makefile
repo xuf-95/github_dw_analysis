@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: up down init-db install ingest-last-hour ingest-last-24h ingest-sample-hour psql status
+.PHONY: up down init-db install ingest-last-hour ingest-last-24h ingest-sample-hour ingest-sample-day psql status
 
 up:
 	docker compose up -d
@@ -17,6 +17,7 @@ install:
 init-db:
 	docker compose exec -T postgres psql -U "$${POSTGRES_USER:-github}" -d "$${POSTGRES_DB:-github_dw_analysis}" -f /dev/stdin < sql/schema/001_create_github_event.sql
 	docker compose exec -T postgres psql -U "$${POSTGRES_USER:-github}" -d "$${POSTGRES_DB:-github_dw_analysis}" -f /dev/stdin < sql/metrics/github_event_metrics.sql
+	docker compose exec -T postgres psql -U "$${POSTGRES_USER:-github}" -d "$${POSTGRES_DB:-github_dw_analysis}" -f /dev/stdin < sql/quality/github_event_quality.sql
 
 ingest-last-hour:
 	.venv/bin/python scripts/ingest_github_archive.py --last-hours 1
@@ -26,6 +27,9 @@ ingest-last-24h:
 
 ingest-sample-hour:
 	.venv/bin/python scripts/ingest_github_archive.py --hour 2024-01-01-0
+
+ingest-sample-day:
+	.venv/bin/python scripts/ingest_github_archive.py --start-hour 2024-01-01-0 --end-hour 2024-01-01-23
 
 psql:
 	docker compose exec postgres psql -U "$${POSTGRES_USER:-github}" -d "$${POSTGRES_DB:-github_dw_analysis}"

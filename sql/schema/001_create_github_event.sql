@@ -16,16 +16,29 @@ CREATE TABLE IF NOT EXISTS dataset_github_event.github_event (
   language text
 );
 
+CREATE TABLE IF NOT EXISTS dataset_github_event.github_event_raw (
+  id bigint PRIMARY KEY,
+  archive_hour timestamp with time zone NOT NULL,
+  type text,
+  created_at timestamp with time zone NOT NULL,
+  raw_event jsonb NOT NULL,
+  ingested_at timestamp with time zone NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS dataset_github_event.github_archive_ingest_log (
   archive_hour timestamp with time zone PRIMARY KEY,
   archive_url text NOT NULL,
   status text NOT NULL,
   event_count integer NOT NULL DEFAULT 0,
   inserted_count integer NOT NULL DEFAULT 0,
+  raw_inserted_count integer NOT NULL DEFAULT 0,
   error_message text,
   started_at timestamp with time zone NOT NULL DEFAULT now(),
   finished_at timestamp with time zone
 );
+
+ALTER TABLE dataset_github_event.github_archive_ingest_log
+ADD COLUMN IF NOT EXISTS raw_inserted_count integer NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_github_event_created_at
 ON dataset_github_event.github_event (created_at DESC);
@@ -38,3 +51,9 @@ ON dataset_github_event.github_event (repo_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_github_event_actor_created_at
 ON dataset_github_event.github_event (actor_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_github_event_raw_archive_hour
+ON dataset_github_event.github_event_raw (archive_hour DESC);
+
+CREATE INDEX IF NOT EXISTS idx_github_event_raw_type_created_at
+ON dataset_github_event.github_event_raw (type, created_at DESC);

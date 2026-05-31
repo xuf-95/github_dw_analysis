@@ -63,11 +63,34 @@ make ingest-last-hour
 make ingest-sample-hour
 ```
 
+采集一段连续 UTC 小时范围：
+
+```bash
+python3 scripts/ingest_github_archive.py --start-hour 2024-01-01-0 --end-hour 2024-01-01-23
+```
+
+重试采集日志中失败的小时：
+
+```bash
+python3 scripts/ingest_github_archive.py --retry-failed
+```
+
 也可以指定 UTC 小时采集：
 
 ```bash
 python3 scripts/ingest_github_archive.py --hour 2026-05-31-10
 ```
+
+查看采集状态和数据质量：
+
+```sql
+SELECT * FROM dataset_github_event.v_ingest_hourly_status;
+SELECT * FROM dataset_github_event.v_failed_ingest_hours;
+SELECT * FROM dataset_github_event.v_event_hourly_quality;
+SELECT * FROM dataset_github_event.v_event_field_null_rate;
+```
+
+原始事件 JSON 会同步写入 `dataset_github_event.github_event_raw`，抽取后的通用字段写入 `dataset_github_event.github_event`。如果后续要新增指标字段，可以优先从 raw 表回放解析，避免重复下载历史文件。
 
 ## 当前数据表
 

@@ -20,12 +20,39 @@
 | `member_id` | 成员 ID，主要来自 MemberEvent |
 | `language` | 仓库语言，若源数据缺失可后续补齐 |
 
+## 原始事件表
+
+`dataset_github_event.github_event_raw` 保存 GitHub Archive 原始事件 JSON，用于历史重放、补充新字段和排查解析问题。
+
+| 字段 | 含义 |
+| --- | --- |
+| `id` | GitHub 事件 ID |
+| `archive_hour` | 事件来源的 GitHub Archive 小时文件 |
+| `type` | 事件类型 |
+| `created_at` | 事件发生时间 |
+| `raw_event` | 清洗 NUL 字符后的完整原始事件 JSON |
+| `ingested_at` | 入库时间 |
+
+## 采集日志表
+
+`dataset_github_event.github_archive_ingest_log` 记录每个小时文件的采集状态。
+
+| 字段 | 含义 |
+| --- | --- |
+| `archive_hour` | 采集小时 |
+| `archive_url` | GitHub Archive 文件地址 |
+| `status` | `running`、`success` 或 `failed` |
+| `event_count` | 文件内解析到的事件数 |
+| `inserted_count` | 本次新增到明细表的事件数 |
+| `raw_inserted_count` | 本次新增到 raw 表的事件数 |
+| `error_message` | 失败原因 |
+| `started_at` | 采集开始时间 |
+| `finished_at` | 采集结束时间 |
+
 ## 建议补充字段
 
 为了支撑更完整的分析，后续建议增加以下字段或扩展表：
 
-- `payload jsonb`：保存事件原始 payload，便于补充新指标。
-- `raw_event jsonb`：完整原始事件，用于重放和审计。
 - `ingested_at timestamptz`：入库时间，用于监控延迟。
 - `event_hour timestamptz`：按小时聚合的分区键。
 - `repo_owner text`：从 `repo_name` 拆分得到。
@@ -54,4 +81,3 @@ ON dataset_github_event.github_event (actor_id, created_at DESC);
 - 语言主题：不同语言事件趋势、热门语言排行。
 - 组织主题：组织活跃项目、组织开发者参与度。
 - 事件主题：事件类型分布、小时趋势、异常波动。
-
