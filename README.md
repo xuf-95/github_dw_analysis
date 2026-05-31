@@ -23,6 +23,52 @@
 - 可视化：Metabase / Apache Superset / Streamlit / 自研 React Dashboard
 - 部署：Docker Compose
 
+## 快速开始
+
+复制本地环境变量示例：
+
+```bash
+cp .env.example .env
+```
+
+启动 PostgreSQL：
+
+```bash
+make up
+```
+
+安装 Python 依赖：
+
+```bash
+make install
+```
+
+该命令会在项目目录下创建 `.venv`，不会安装到全局 Python 环境。
+
+初始化数据表和指标视图：
+
+```bash
+make init-db
+```
+
+采集最近 1 个已完成小时的 GitHub Archive 事件：
+
+```bash
+make ingest-last-hour
+```
+
+如果最新小时文件暂未发布，可以用稳定的历史样例验证链路：
+
+```bash
+make ingest-sample-hour
+```
+
+也可以指定 UTC 小时采集：
+
+```bash
+python3 scripts/ingest_github_archive.py --hour 2026-05-31-10
+```
+
 ## 当前数据表
 
 ```sql
@@ -52,12 +98,12 @@ CREATE TABLE dataset_github_event.github_event (
 - 过去 24 小时星标项目排行
 - 实时事件展示
 
-建表脚本位于 [sql/schema/001_create_github_event.sql](/Users/xpf/Documents/Github实时数据同步与分析/sql/schema/001_create_github_event.sql)。
+建表脚本位于 [sql/schema/001_create_github_event.sql](/Users/xpf/Git/github_dw_analysis/sql/schema/001_create_github_event.sql)。
 
-首批 SQL 位于 [sql/metrics/github_event_metrics.sql](/Users/xpf/Documents/Github实时数据同步与分析/sql/metrics/github_event_metrics.sql)。
+首批 SQL 位于 [sql/metrics/github_event_metrics.sql](/Users/xpf/Git/github_dw_analysis/sql/metrics/github_event_metrics.sql)。
 
 ## 文档
 
-- [架构设计](/Users/xpf/Documents/Github实时数据同步与分析/docs/architecture.md)
-- [数据模型](/Users/xpf/Documents/Github实时数据同步与分析/docs/data-model.md)
-- [项目路线图](/Users/xpf/Documents/Github实时数据同步与分析/docs/roadmap.md)
+- [架构设计](/Users/xpf/Git/github_dw_analysis/docs/architecture.md)
+- [数据模型](/Users/xpf/Git/github_dw_analysis/docs/data-model.md)
+- [项目路线图](/Users/xpf/Git/github_dw_analysis/docs/roadmap.md)

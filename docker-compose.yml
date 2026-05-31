@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: github_dw_analysis_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-github_dw_analysis}
+      POSTGRES_USER: ${POSTGRES_USER:-github}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-github}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-github} -d ${POSTGRES_DB:-github_dw_analysis}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+
