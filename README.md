@@ -92,6 +92,14 @@ SELECT * FROM dataset_github_event.v_event_field_null_rate;
 
 原始事件 JSON 会同步写入 `dataset_github_event.github_event_raw`，抽取后的通用字段写入 `dataset_github_event.github_event`。如果后续要新增指标字段，可以优先从 raw 表回放解析，避免重复下载历史文件。
 
+回填重点事件详情表：
+
+```bash
+make backfill-details
+```
+
+该命令会从 `github_event_raw` 解析 `PushEvent`、`WatchEvent`、`ForkEvent`、`IssuesEvent`、`PullRequestEvent`，写入对应详情表。
+
 ## 当前数据表
 
 ```sql
@@ -129,4 +137,5 @@ CREATE TABLE dataset_github_event.github_event (
 
 - [架构设计](/Users/xpf/Git/github_dw_analysis/docs/architecture.md)
 - [数据模型](/Users/xpf/Git/github_dw_analysis/docs/data-model.md)
+- [事件类型解析](/Users/xpf/Git/github_dw_analysis/docs/event-types.md)
 - [项目路线图](/Users/xpf/Git/github_dw_analysis/docs/roadmap.md)
